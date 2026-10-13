@@ -3,14 +3,61 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>ARお花見カメラ</title>
+  <title>常時ARお花見カメラ</title>
   <style>
     body {
       margin: 0;
       padding: 0;
       overflow: hidden;
       font-family: sans-serif;
+      background: #000;
     }
+    /* スマホカメラ映像を背景いっぱいに表示 */
+    #webcam {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      object-fit: cover;
+      z-index: 1;
+    }
+    /* AR演出・フレームを重ねるレイヤー */
+    #ar-layer {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      z-index: 2;
+      pointer-events: none; /* タップ操作を透過し、ピンチ操作はwindowで拾う */
+    }
+    /* お花見用フレーム（中央に表示されるメイン画像） */
+    #sakura-frame {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 75vw;
+      height: 75vh;
+      transform: translate(-50%, -50%) scale(1);
+      transform-origin: center;
+      border: 4px solid rgba(255, 183, 197, 0.7);
+      border-radius: 24px;
+      box-sizing: border-box;
+      background-image: url('1.jpg'); /* お花見のイラストや写真画像 */
+      background-size: cover;
+      background-position: center;
+      box-shadow: 0 0 25px rgba(255, 183, 197, 0.8);
+    }
+    /* 桜の花びらを描画するCanvas */
+    #petal-canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+    }
+    /* ガイド・ステータス表示 */
     #info-overlay {
       position: absolute;
       top: 12px;
@@ -21,7 +68,7 @@
       padding: 10px 14px;
       border-radius: 8px;
       font-size: 12px;
-      z-index: 999;
+      z-index: 10;
       pointer-events: none;
       text-align: center;
     }
@@ -36,7 +83,7 @@
       left: 0;
       width: 100%;
       text-align: center;
-      z-index: 999;
+      z-index: 10;
     }
     #shutter-btn {
       width: 75px;
@@ -53,67 +100,22 @@
       background: #ffb7c5;
     }
   </style>
-
-  <!-- A-Frame & MindAR の読み込み -->
-  <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
-
-  <!-- 桜の花びらを降らせるカスタムコンポーネント -->
-  <script>
-    AFRAME.registerComponent('sakura-rain', {
-      init: function () {
-        const el = this.el;
-        this.petals = [];
-        // 花びらを25枚生成
-        for (let i = 0; i < 25; i++) {
-          const petal = document.createElement('a-plane');
-          petal.setAttribute('width', '0.08');
-          petal.setAttribute('height', '0.08');
-          petal.setAttribute('color', '#ffb7c5');
-          petal.setAttribute('material', 'transparent: true; opacity: 0.85; shader: flat;');
-          
-          // ランダムな初期位置
-          const x = (Math.random() - 0.5) * 2.5;
-          const y = Math.random() * 2 + 0.5;
-          const z = (Math.random() - 0.5) * 2.5;
-          petal.setAttribute('position', `${x} ${y} ${z}`);
-          
-          // ランダムな回転
-          petal.setAttribute('rotation', `${Math.random()*360} ${Math.random()*360} 0`);
-          
-          el.appendChild(petal);
-          this.petals.push({
-            el: petal,
-            speedY: 0.003 + Math.random() * 0.004,
-            speedX: 0.001 + Math.random() * 0.002,
-            rotSpeed: Math.random() * 2
-          });
-        }
-      },
-      tick: function (time, deltaTime) {
-        // 花びらを舞い散らせるアニメーション処理
-        this.petals.forEach((p, index) => {
-          const pos = p.el.getAttribute('position');
-          pos.y -= p.speedY;
-          pos.x += Math.sin(time * 0.002 + index) * p.speedX;
-          
-          // 下まで落ちたら上に戻す
-          if (pos.y < -0.5) {
-            pos.y = 2.0;
-            pos.x = (Math.random() - 0.5) * 2.5;
-          }
-          p.el.setAttribute('position', pos);
-        });
-      }
-    });
-  </script>
 </head>
 <body>
 
-  <!-- 操作ガイドの表示 -->
+  <!-- スマホのカメラ映像 -->
+  <video id="webcam" autoplay playsinline muted></video>
+
+  <!-- ARオーバーレイ（フレーム ＆ 舞い散る花びら） -->
+  <div id="ar-layer">
+    <div id="sakura-frame"></div>
+    <canvas id="petal-canvas"></canvas>
+  </div>
+
+  <!-- 操作ガイド -->
   <div id="info-overlay">
-    <div>状態: <span id="status">準備中...</span></div>
-    <div style="margin-top: 4px; font-size: 10px; color: #ddd;">マーカーをかざして花見を体験 / 2本指: 拡大縮小</div>
+    <div>状態: <span id="status">カメラ起動中...</span></div>
+    <div style="margin-top: 4px; font-size: 10px; color: #ddd;">2本指でフレームの拡大・縮小ができます</div>
   </div>
 
   <!-- シャッターボタン -->
@@ -121,67 +123,105 @@
     <button id="shutter-btn" title="写真を撮影"></button>
   </div>
 
-  <a-scene 
-    mindar-image="imageTargetSrc: ./targets.mind;" 
-    vr-mode-ui="enabled: false" 
-    device-orientation-permission-ui="enabled: false">
-
-    <a-assets>
-      <!-- お花見用のメイン画像（必要に応じて画像ファイルを変更してください） -->
-      <img id="hanamiImg" src="1.jpg">
-    </a-assets>
-
-    <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
-
-    <!-- マーカーを認識したときに表示されるターゲット＆桜のエフェクト -->
-    <a-entity id="targetEntity" mindar-image-target="targetIndex: 0">
-      <!-- メインの画像プレーン -->
-      <a-plane 
-        id="slidePlane" 
-        src="#hanamiImg" 
-        position="0 0 0" 
-        width="1" 
-        height="1.414" 
-        scale="1 1 1">
-      </a-plane>
-
-      <!-- 舞い散る桜の花びらエフェクト -->
-      <a-entity sakura-rain></a-entity>
-    </a-entity>
-
-  </a-scene>
-
   <script>
+    const webcamEl = document.getElementById('webcam');
     const statusEl = document.getElementById('status');
-    const sceneEl = document.querySelector('a-scene');
-    const slidePlane = document.querySelector('#slidePlane');
-    const targetEntity = document.querySelector('#targetEntity');
+    const sakuraFrame = document.getElementById('sakura-frame');
+    const petalCanvas = document.getElementById('petal-canvas');
+    const ctx = petalCanvas.getContext('2d');
     const shutterBtn = document.getElementById('shutter-btn');
 
-    // カメラ起動・エラーの判定
-    sceneEl.addEventListener("arReady", () => {
-      statusEl.textContent = "カメラ起動成功！マーカーをかざしてください";
-      statusEl.className = "success";
-    });
+    // キャンバスサイズを画面解像度に合わせる
+    function resizeCanvas() {
+      petalCanvas.width = window.innerWidth;
+      petalCanvas.height = window.innerHeight;
+    }
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
 
-    sceneEl.addEventListener("arError", () => {
-      statusEl.textContent = "エラー: targets.mind の読み込み失敗";
-      statusEl.className = "error";
-    });
+    // カメラ（スマホのバックカメラ優先）を起動
+    async function initCamera() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { exact: "environment" } },
+          audio: false
+        });
+        webcamEl.srcObject = stream;
+        statusEl.textContent = "お花見カメラ起動中！桜が舞っています";
+        statusEl.className = "success";
+      } catch (err) {
+        // バックカメラが強制できない場合のフォールバック
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({
+            video: true,
+            audio: false
+          });
+          webcamEl.srcObject = stream;
+          statusEl.textContent = "お花見カメラ起動中！桜が舞っています";
+          statusEl.className = "success";
+        } catch (e) {
+          statusEl.textContent = "エラー: カメラの起動に失敗しました";
+          statusEl.className = "error";
+          console.error(e);
+        }
+      }
+    }
+    initCamera();
 
-    targetEntity.addEventListener('targetFound', () => {
-      statusEl.textContent = 'お花見AR展開中！桜が舞っています';
-      statusEl.className = 'success';
-    });
+    // 桜の花びらパーティクルシステム
+    const petals = [];
+    const petalCount = 35;
 
-    targetEntity.addEventListener('targetLost', () => {
-      statusEl.textContent = 'マーカーを検索中...';
-      statusEl.className = '';
-    });
+    for (let i = 0; i < petalCount; i++) {
+      petals.push({
+        x: Math.random() * window.innerWidth,
+        y: Math.random() * window.innerHeight,
+        size: Math.random() * 8 + 5,
+        speedY: Math.random() * 2 + 1,
+        speedX: (Math.random() - 0.5) * 1.5,
+        rotation: Math.random() * 360,
+        rotSpeed: (Math.random() - 0.5) * 4,
+        opacity: Math.random() * 0.5 + 0.5
+      });
+    }
 
-    // ピンチイン・ピンチアウト（拡大縮小）の処理
+    function drawPetals() {
+      ctx.clearRect(0, 0, petalCanvas.width, petalCanvas.height);
+
+      petals.forEach(p => {
+        p.y += p.speedY;
+        p.x += p.speedX + Math.sin(p.y * 0.01) * 0.6;
+        p.rotation += p.rotSpeed;
+
+        // 画面外に出たら上に戻す（無限ループ）
+        if (p.y > window.innerHeight + 20) {
+          p.y = -20;
+          p.x = Math.random() * window.innerWidth;
+        }
+        if (p.x > window.innerWidth + 20) p.x = -20;
+        if (p.x < -20) p.x = window.innerWidth + 20;
+
+        ctx.save();
+        ctx.translate(p.x, p.y);
+        ctx.rotate((p.rotation * Math.PI) / 180);
+        ctx.globalAlpha = p.opacity;
+
+        // 花びらの形を描画
+        ctx.fillStyle = '#ffb7c5';
+        ctx.beginPath();
+        ctx.ellipse(0, 0, p.size, p.size * 0.6, 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.restore();
+      });
+
+      requestAnimationFrame(drawPetals);
+    }
+    drawPetals();
+
+    // 2本指によるピンチイン・ピンチアウト（拡大縮小機能）
     let initialDistance = null;
-    let initialScale = 1;
+    let currentScale = 1;
 
     window.addEventListener('touchstart', (e) => {
       if (e.touches.length === 2) {
@@ -189,57 +229,95 @@
           e.touches[0].clientX - e.touches[1].clientX,
           e.touches[0].clientY - e.touches[1].clientY
         );
-        if (slidePlane) {
-          const s = slidePlane.getAttribute('scale');
-          if (s) initialScale = s.x;
-        }
       }
     }, { passive: true });
 
     window.addEventListener('touchmove', (e) => {
-      if (!slidePlane) return;
       if (e.touches.length === 2 && initialDistance !== null && initialDistance > 0) {
         const currentDistance = Math.hypot(
           e.touches[0].clientX - e.touches[1].clientX,
           e.touches[0].clientY - e.touches[1].clientY
         );
         const factor = currentDistance / initialDistance;
-        let newScale = Math.max(0.2, Math.min(3.0, initialScale * factor));
-        slidePlane.setAttribute('scale', `${newScale} ${newScale} ${newScale}`);
+        let newScale = Math.max(0.4, Math.min(2.5, currentScale * factor));
+        
+        sakuraFrame.style.transform = `translate(-50%, -50%) scale(${newScale})`;
       }
     }, { passive: true });
 
     window.addEventListener('touchend', (e) => {
-      if (e.touches.length < 2) {
+      if (e.touches.length < 2 && initialDistance !== null) {
+        // 現在のスケールを保持
+        const matrix = window.getComputedStyle(sakuraFrame).transform;
+        if (matrix !== 'none') {
+          const values = matrix.split('(')[1].split(')')[0].split(',');
+          currentScale = Math.sqrt(values[0] * values[0] + values[1] * values[1]);
+        }
         initialDistance = null;
       }
     });
 
-    // シャッター機能（カメラ背景動画 ＋ 3D/AR描画を合成して画像として保存）
+    // シャッター機能（カメラ映像 ＋ 桜フレーム ＋ 舞い散る花びらを合成して保存）
     shutterBtn.addEventListener('click', () => {
-      const videoEl = document.querySelector('video');
-      const arCanvas = sceneEl.renderer.domElement;
-
-      // 撮影用の一時キャンバスを作成
       const canvas = document.createElement('canvas');
       canvas.width = window.innerWidth;
       canvas.height = window.innerHeight;
-      const ctx = canvas.getContext('2d');
+      const saveCtx = canvas.getContext('2d');
 
-      // 1. スマホのカメラ映像（背景）を描画
-      if (videoEl) {
-        ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
+      // 1. スマホのカメラ背景を描画
+      if (webcamEl.readyState === webcamEl.HAVE_ENOUGH_DATA) {
+        const vRatio = webcamEl.videoWidth / webcamEl.videoHeight;
+        const cRatio = canvas.width / canvas.height;
+        let w = canvas.width, h = canvas.height, x = 0, y = 0;
+        if (vRatio > cRatio) {
+          w = canvas.height * vRatio;
+          x = (canvas.width - w) / 2;
+        } else {
+          h = canvas.width / vRatio;
+          y = (canvas.height - h) / 2;
+        }
+        saveCtx.drawImage(webcamEl, x, y, w, h);
       }
 
-      // 2. その上からARの描画（画像 ＆ 桜の花びら）を合成
-      ctx.drawImage(arCanvas, 0, 0, canvas.width, canvas.height);
+      // 2. 桜フレームを描画
+      const rect = sakuraFrame.getBoundingClientRect();
+      const bgImgUrl = window.getComputedStyle(sakuraFrame).backgroundImage;
+      const match = bgImgUrl.match(/url$$"?(.*?)[""]?$$/);
 
-      // 3. 画像ファイルを生成してダウンロードリンクを実行
+      if (match && match[1]) {
+        const img = new Image();
+        img.crossOrigin = "anonymous";
+        img.onload = () => {
+          saveCtx.drawImage(img, rect.left, rect.top, rect.width, rect.height);
+          finishSave(saveCtx, canvas);
+        };
+        img.onerror = () => {
+          drawFrameFallback(saveCtx, rect);
+          finishSave(saveCtx, canvas);
+        };
+        img.src = match[1];
+      } else {
+        drawFrameFallback(saveCtx, rect);
+        finishSave(saveCtx, canvas);
+      }
+    });
+
+    function drawFrameFallback(saveCtx, rect) {
+      saveCtx.strokeStyle = 'rgba(255, 183, 197, 0.8)';
+      saveCtx.lineWidth = 8;
+      saveCtx.strokeRect(rect.left, rect.top, rect.width, rect.height);
+    }
+
+    function finishSave(saveCtx, canvas) {
+      // 3. 舞い散る花びらのCanvasを重ねて描画
+      saveCtx.drawImage(petalCanvas, 0, 0);
+
+      // 画像としてダウンロード保存
       const link = document.createElement('a');
       link.download = 'ar_hanami_' + Date.now() + '.png';
       link.href = canvas.toDataURL('image/png');
       link.click();
-    });
+    }
   </script>
 </body>
 </html>
