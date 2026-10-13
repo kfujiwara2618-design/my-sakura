@@ -3,13 +3,13 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>常時お花見ARカメラ（背景透過対応）</title>
+  <title>Luxury Hanami AR Camera - High Definition</title>
   <style>
     body {
       margin: 0;
       padding: 0;
       overflow: hidden;
-      font-family: sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Helvetica Neue', Arial, sans-serif;
       background: #000;
       touch-action: none;
     }
@@ -33,55 +33,60 @@
       z-index: 2;
       pointer-events: none;
     }
-    /* 描画・合成用のメインCanvas（フレーム ＆ 花びら） */
+    /* 高解像度対応Canvas */
     #ar-canvas {
       position: absolute;
       top: 0;
       left: 0;
-      width: 100%;
-      height: 100%;
+      width: 100vw;
+      height: 100vh;
     }
-    /* ガイド・ステータス表示 */
+    /* ラグジュアリーなステータス表示（グラスモーフィズム） */
     #info-overlay {
       position: absolute;
-      top: 12px;
-      left: 12px;
-      right: 12px;
-      background: rgba(0, 0, 0, 0.7);
-      color: #ffffff;
-      padding: 10px 14px;
-      border-radius: 8px;
-      font-size: 12px;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(15, 15, 15, 0.6);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+      color: #f7f3ed;
+      padding: 8px 22px;
+      border-radius: 30px;
+      border: 1px solid rgba(228, 195, 139, 0.4);
+      font-size: 11px;
+      letter-spacing: 0.1em;
       z-index: 10;
       pointer-events: none;
       text-align: center;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.6);
+      white-space: nowrap;
     }
-    #status { font-weight: bold; color: #ffd700; }
-    .success { color: #51cf66 !important; }
-    .error { color: #ff6b6b !important; }
+    #status { font-weight: 500; color: #e4c38b; }
 
-    /* シャッターボタンのスタイル */
+    /* 最高級メタリック調のシャッターボタン */
     #shutter-container {
       position: absolute;
-      bottom: 30px;
+      bottom: 45px;
       left: 0;
       width: 100%;
       text-align: center;
       z-index: 10;
     }
     #shutter-btn {
-      width: 75px;
-      height: 75px;
+      width: 78px;
+      height: 78px;
       border-radius: 50%;
-      background: #ffffff;
-      border: 5px solid rgba(255, 255, 255, 0.6);
+      background: linear-gradient(135deg, #ffffff 0%, #d8c4b6 50%, #b8977e 100%);
+      border: 3px solid rgba(228, 195, 139, 0.95);
       cursor: pointer;
-      box-shadow: 0 4px 10px rgba(0,0,0,0.3);
-      transition: transform 0.1s;
+      box-shadow: 0 12px 35px rgba(0,0,0,0.7), inset 0 2px 6px rgba(255,255,255,0.95);
+      transition: transform 0.15s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.15s ease;
+      outline: none;
     }
     #shutter-btn:active {
-      transform: scale(0.9);
-      background: #ffb7c5;
+      transform: scale(0.92);
+      box-shadow: 0 5px 15px rgba(0,0,0,0.5), inset 0 1px 3px rgba(0,0,0,0.4);
     }
   </style>
 </head>
@@ -90,20 +95,20 @@
   <!-- スマホのカメラ映像 -->
   <video id="webcam" autoplay playsinline muted></video>
 
-  <!-- ARレイヤー（Canvasでフレームと花びらを一括描画・透過合成） -->
+  <!-- ARレイヤー -->
   <div id="ar-layer">
     <canvas id="ar-canvas"></canvas>
   </div>
 
-  <!-- 操作ガイド -->
+  <!-- ガイド・ステータス表示 -->
   <div id="info-overlay">
-    <div>状態: <span id="status">カメラ起動中...</span></div>
-    <div style="margin-top: 4px; font-size: 10px; color: #ddd;">2本指でフレームの拡大・縮小ができます</div>
+    <div>AR EXPERIENCE: <span id="status">CONNECTING...</span></div>
+    <div style="margin-top: 3px; font-size: 8.5px; color: rgba(255,255,255,0.55); letter-spacing: 0.05em;">2本指でフレームの拡大・縮小</div>
   </div>
 
   <!-- シャッターボタン -->
   <div id="shutter-container">
-    <button id="shutter-btn" title="写真を撮影"></button>
+    <button id="shutter-btn" title="Capture"></button>
   </div>
 
   <script>
@@ -113,24 +118,37 @@
     const ctx = arCanvas.getContext('2d');
     const shutterBtn = document.getElementById('shutter-btn');
 
-    // 画面解像度に合わせてCanvasサイズを調整
+    // --- 高解像度 (Retina) 対応のCanvasリサイズ処理 ---
+    let dpr = window.devicePixelRatio || 1;
+
     function resizeCanvas() {
-      arCanvas.width = window.innerWidth;
-      arCanvas.height = window.innerHeight;
+      dpr = window.devicePixelRatio || 1;
+      const width = window.innerWidth;
+      const height = window.innerHeight;
+
+      // 内部解像度をデバイスのピクセル比に合わせて高精度化
+      arCanvas.width = width * dpr;
+      arCanvas.height = height * dpr;
+      
+      // CSS表示サイズを画面全体に固定
+      arCanvas.style.width = width + 'px';
+      arCanvas.style.height = height + 'px';
+
+      // 描画スケールをスプレッド
+      ctx.scale(dpr, dpr);
     }
     window.addEventListener('resize', resizeCanvas);
     resizeCanvas();
 
-    // カメラ（スマホの背面カメラ）を起動
+    // カメラ（背面カメラ優先）の起動
     async function initCamera() {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: { exact: "environment" } },
+          video: { facingMode: { exact: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } },
           audio: false
         });
         webcamEl.srcObject = stream;
-        statusEl.textContent = "お花見カメラ起動中！桜が舞っています";
-        statusEl.className = "success";
+        statusEl.textContent = "READY";
       } catch (err) {
         try {
           const stream = await navigator.mediaDevices.getUserMedia({
@@ -138,118 +156,184 @@
             audio: false
           });
           webcamEl.srcObject = stream;
-          statusEl.textContent = "お花見カメラ起動中！桜が舞っています";
-          statusEl.className = "success";
+          statusEl.textContent = "READY";
         } catch (e) {
-          statusEl.textContent = "エラー: カメラの起動に失敗しました";
-          statusEl.className = "error";
+          statusEl.textContent = "CAMERA ERROR";
           console.error(e);
         }
       }
     }
     initCamera();
 
-    // 1.png を読み込み、白背景を自動透過（白抜き）処理する
+    // 1.png を読み込み、白背景を自動高精度透過処理する
     let processedFrameImg = null;
     function loadAndProcessFrame() {
       const img = new Image();
       img.crossOrigin = "anonymous";
       img.onload = () => {
         const tempCanvas = document.createElement('canvas');
-        tempCanvas.width = img.width;
-        tempCanvas.height = img.height;
+        tempCanvas.width = img.naturalWidth || img.width;
+        tempCanvas.height = img.naturalHeight || img.height;
         const tempCtx = tempCanvas.getContext('2d');
         tempCtx.drawImage(img, 0, 0);
 
-        // 画像のピクセルデータを取得して白に近い部分を透明化
         const imgData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
         const data = imgData.data;
         for (let i = 0; i < data.length; i += 4) {
           const r = data[i], g = data[i+1], b = data[i+2];
-          // 白っぽい背景（RGBすべて210以上）を透明にする
-          if (r > 210 && g > 210 && b > 210) {
-            data[i+3] = 0; // Alpha = 0 (完全透過)
+          // 白に近い背景を高精度でクリアに透過
+          if (r > 200 && g > 200 && b > 200) {
+            data[i+3] = 0; 
           }
         }
         tempCtx.putImageData(imgData, 0, 0);
         processedFrameImg = tempCanvas;
       };
       img.onerror = () => {
-        console.warn("1.png の読み込みに失敗しました。枠線のみで描画します。");
+        console.warn("1.png の読み込みに失敗しました。");
       };
       img.src = '1.png';
     }
     loadAndProcessFrame();
 
-    // 桜の花びらパーティクル設定
-    const petals = [];
-    const petalCount = 35;
-    for (let i = 0; i < petalCount; i++) {
-      petals.push({
+    // --- ラグジュアリー・パーティクル（高精細な桜 ＆ ゴールドスパークル） ---
+    const particles = [];
+    
+    // 桜の花びら (35枚)
+    for (let i = 0; i < 35; i++) {
+      particles.push({
+        type: 'petal',
         x: Math.random() * window.innerWidth,
         y: Math.random() * window.innerHeight,
-        size: Math.random() * 8 + 5,
-        speedY: Math.random() * 2 + 1,
-        speedX: (Math.random() - 0.5) * 1.5,
+        size: Math.random() * 12 + 8,
+        speedY: Math.random() * 1.4 + 0.7,
+        speedX: (Math.random() - 0.5) * 1.2,
         rotation: Math.random() * 360,
-        rotSpeed: (Math.random() - 0.5) * 4,
-        opacity: Math.random() * 0.5 + 0.5
+        rotSpeed: (Math.random() - 0.5) * 2.0,
+        swaySpeed: Math.random() * 0.012 + 0.006,
+        swayAmp: Math.random() * 40 + 20,
+        initialX: Math.random() * window.innerWidth,
+        opacity: Math.random() * 0.35 + 0.65,
+        colorVariant: Math.random() > 0.4 ? '#ffb7c5' : '#ffd1dc'
       });
     }
 
-    // フレームのサイズ・拡大縮小の管理変数
+    // シャンパンゴールドのダイヤモンドスパークル (25個)
+    for (let i = 0; i < 25; i++) {
+      particles.push({
+        type: 'sparkle',
+        x: Math.random() * window.innerWidth,
+        y: Math.random() * window.innerHeight,
+        size: Math.random() * 3.5 + 1.2,
+        speedY: Math.random() * 0.7 + 0.2,
+        speedX: (Math.random() - 0.5) * 0.4,
+        opacity: Math.random() * 0.8 + 0.2,
+        pulseSpeed: Math.random() * 0.08 + 0.03
+      });
+    }
+
     let frameScale = 1.0;
+    let timeCount = 0;
 
-    // メインの描画ループ（アニメーション）
+    // 高品質な桜の花びら描画関数
+    function drawPetal(ctx, p) {
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      ctx.rotate((p.rotation * Math.PI) / 180);
+      ctx.globalAlpha = p.opacity;
+
+      // リッチなグラデーションと立体感
+      const grad = ctx.createRadialGradient(0, -p.size * 0.2, 0, 0, 0, p.size * 1.2);
+      grad.addColorStop(0, '#ffffff');
+      grad.addColorStop(0.4, p.colorVariant);
+      grad.addColorStop(1, '#ff7b93');
+
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.moveTo(0, -p.size);
+      ctx.bezierCurveTo(p.size * 0.9, -p.size * 1.4, p.size * 1.2, p.size * 0.4, 0, p.size * 1.1);
+      ctx.bezierCurveTo(-p.size * 1.2, p.size * 0.4, -p.size * 0.9, -p.size * 1.4, 0, -p.size);
+      ctx.fill();
+
+      // 花びらの中心線（葉脈）の繊細な光沢
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
+      ctx.lineWidth = 0.8;
+      ctx.beginPath();
+      ctx.moveTo(0, -p.size * 0.7);
+      ctx.lineTo(0, p.size * 0.3);
+      ctx.stroke();
+
+      ctx.restore();
+    }
+
+    // メインの描画ループ
     function renderLoop() {
-      ctx.clearRect(0, 0, arCanvas.width, arCanvas.height);
+      timeCount += 0.016;
+      const logicalWidth = window.innerWidth;
+      const logicalHeight = window.innerHeight;
 
-      // --- A. 中央のフレーム（1.png・背景透過）の描画 ---
-      const baseW = Math.min(window.innerWidth * 0.75, 400) * frameScale;
-      const baseH = baseW * 1.414; // 比率 1:1.414
-      const frameX = (arCanvas.width - baseW) / 2;
-      const frameY = (arCanvas.height - baseH) / 2;
+      // 論理サイズでクリア
+      ctx.clearRect(0, 0, logicalWidth, logicalHeight);
+
+      // --- A. ラグジュアリーなフレームの描画（優雅なフロートアニメーション付） ---
+      const floatOffsetY = Math.sin(timeCount * 1.5) * 6;
+      const baseW = Math.min(logicalWidth * 0.75, 420) * frameScale;
+      const baseH = baseW * 1.414;
+      const frameX = (logicalWidth - baseW) / 2;
+      const frameY = (logicalHeight - baseH) / 2 + floatOffsetY;
 
       if (processedFrameImg) {
+        ctx.save();
+        // シャンパンゴールドの上品な外側グロウ
+        ctx.shadowColor = 'rgba(228, 195, 139, 0.65)';
+        ctx.shadowBlur = 35;
         ctx.drawImage(processedFrameImg, frameX, frameY, baseW, baseH);
+        ctx.restore();
       } else {
-        // 画像読み込み前のフォールバック（枠線）
-        ctx.strokeStyle = 'rgba(255, 183, 197, 0.8)';
-        ctx.lineWidth = 6;
+        ctx.strokeStyle = 'rgba(228, 195, 139, 0.85)';
+        ctx.lineWidth = 5;
         ctx.strokeRect(frameX, frameY, baseW, baseH);
       }
 
-      // --- B. 舞い散る花びらの描画 ---
-      petals.forEach(p => {
+      // --- B. パーティクルの描写 ---
+      particles.forEach((p, index) => {
         p.y += p.speedY;
-        p.x += p.speedX + Math.sin(p.y * 0.01) * 0.6;
-        p.rotation += p.rotSpeed;
+        if (p.type === 'petal') {
+          p.x = p.initialX + Math.sin(p.y * p.swaySpeed) * p.swayAmp;
+          p.rotation += p.rotSpeed;
 
-        if (p.y > arCanvas.height + 20) {
-          p.y = -20;
-          p.x = Math.random() * arCanvas.width;
+          if (p.y > logicalHeight + 40) {
+            p.y = -40;
+            p.initialX = Math.random() * logicalWidth;
+          }
+          drawPetal(ctx, p);
+        } else if (p.type === 'sparkle') {
+          p.x += p.speedX;
+          const pulse = 0.5 + Math.sin(timeCount * 5 + index * 1.5) * 0.5;
+          const currentAlpha = Math.max(0, p.opacity * pulse);
+
+          if (p.y > logicalHeight + 20) {
+            p.y = -20;
+            p.x = Math.random() * logicalWidth;
+          }
+
+          ctx.save();
+          ctx.globalAlpha = currentAlpha;
+          ctx.fillStyle = '#ffea9f'; // 輝くシャンパンゴールド
+          ctx.shadowColor = '#fff3bf';
+          ctx.shadowBlur = 12;
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
         }
-        if (p.x > arCanvas.width + 20) p.x = -20;
-        if (p.x < -20) p.x = arCanvas.width + 20;
-
-        ctx.save();
-        ctx.translate(p.x, p.y);
-        ctx.rotate((p.rotation * Math.PI) / 180);
-        ctx.globalAlpha = p.opacity;
-
-        ctx.fillStyle = '#ffb7c5';
-        ctx.beginPath();
-        ctx.ellipse(0, 0, p.size, p.size * 0.6, 0, 0, Math.PI * 2);
-        ctx.fill();
-
-        ctx.restore();
       });
 
       requestAnimationFrame(renderLoop);
     }
     renderLoop();
 
-    // 2本指によるピンチイン・ピンチアウト（拡大縮小）の処理
+    // 2本指によるピンチイン・ピンチアウト（拡大縮小）
     let initialDistance = null;
     let initialScale = 1.0;
 
@@ -280,35 +364,40 @@
       }
     });
 
-    // シャッター機能（カメラ背景 ＋ 透過フレーム ＋ 花びらを1枚の画像に合成して保存）
+    // シャッター機能（高解像度合成・保存）
     shutterBtn.addEventListener('click', () => {
+      // 保存用Canvasはデバイスのフル解像度（Retina等に対応した超高解像度）で書き出す
       const saveCanvas = document.createElement('canvas');
-      saveCanvas.width = window.innerWidth;
-      saveCanvas.height = window.innerHeight;
+      const logicalWidth = window.innerWidth;
+      const logicalHeight = window.innerHeight;
+      
+      saveCanvas.width = logicalWidth * dpr;
+      saveCanvas.height = logicalHeight * dpr;
       const saveCtx = saveCanvas.getContext('2d');
+      saveCtx.scale(dpr, dpr);
 
-      // 1. スマホカメラの背景映像を描画
+      // 1. カメラ背景映像を高画質で描画
       if (webcamEl.readyState === webcamEl.HAVE_ENOUGH_DATA) {
         const vRatio = webcamEl.videoWidth / webcamEl.videoHeight;
-        const cRatio = saveCanvas.width / saveCanvas.height;
-        let w = saveCanvas.width, h = saveCanvas.height, x = 0, y = 0;
+        const cRatio = logicalWidth / logicalHeight;
+        let w = logicalWidth, h = logicalHeight, x = 0, y = 0;
         if (vRatio > cRatio) {
-          w = saveCanvas.height * vRatio;
-          x = (saveCanvas.width - w) / 2;
+          w = logicalHeight * vRatio;
+          x = (logicalWidth - w) / 2;
         } else {
-          h = saveCanvas.width / vRatio;
-          y = (saveCanvas.height - h) / 2;
+          h = logicalWidth / vRatio;
+          y = (logicalHeight - h) / 2;
         }
         saveCtx.drawImage(webcamEl, x, y, w, h);
       }
 
-      // 2. 現在のAR演出（透過フレーム ＆ 舞い散る花びら）のCanvasをそのまま合成
-      saveCtx.drawImage(arCanvas, 0, 0);
+      // 2. 現在のAR演出（透過フレーム ＆ 桜・ゴールドスパークル）を正確に重ねて合成
+      saveCtx.drawImage(arCanvas, 0, 0, logicalWidth, logicalHeight);
 
-      // 3. 画像ファイルを生成してダウンロード保存
+      // 3. 超高画質PNGとしてダウンロード保存
       const link = document.createElement('a');
-      link.download = 'ar_hanami_' + Date.now() + '.png';
-      link.href = saveCanvas.toDataURL('image/png');
+      link.download = 'luxury_hanami_hd_' + Date.now() + '.png';
+      link.href = saveCanvas.toDataURL('image/png', 1.0);
       link.click();
     });
   </script>
