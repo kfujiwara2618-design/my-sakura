@@ -149,7 +149,7 @@
     }
     initCamera();
 
-    // 1.jpg を読み込み、白背景を自動透過（白抜き）処理する
+    // 1.png を読み込み、白背景を自動透過（白抜き）処理する
     let processedFrameImg = null;
     function loadAndProcessFrame() {
       const img = new Image();
@@ -175,9 +175,9 @@
         processedFrameImg = tempCanvas;
       };
       img.onerror = () => {
-        console.warn("1.jpg の読み込みに失敗しました。枠線のみで描画します。");
+        console.warn("1.png の読み込みに失敗しました。枠線のみで描画します。");
       };
-      img.src = '1.jpg';
+      img.src = '1.png';
     }
     loadAndProcessFrame();
 
@@ -204,7 +204,7 @@
     function renderLoop() {
       ctx.clearRect(0, 0, arCanvas.width, arCanvas.height);
 
-      // --- A. 中央のフレーム（1.jpg・背景透過）の描画 ---
+      // --- A. 中央のフレーム（1.png・背景透過）の描画 ---
       const baseW = Math.min(window.innerWidth * 0.75, 400) * frameScale;
       const baseH = baseW * 1.414; // 比率 1:1.414
       const frameX = (arCanvas.width - baseW) / 2;
