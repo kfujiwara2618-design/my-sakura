@@ -4,6 +4,11 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
   <title>Luxury Pro AR Camera - High Definition</title>
+
+  <!-- MediaPipe Face Detection の読み込み（リアルタイム顔認識用） -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/face_detection.js" crossorigin="anonymous"></script>
+
   <style>
     body {
       margin: 0;
@@ -126,6 +131,73 @@
       transform: scale(0.92);
       box-shadow: 0 5px 15px rgba(0,0,0,0.5), inset 0 1px 3px rgba(0,0,0,0.4);
     }
+
+    /* 撮影ギャラリー機能用アイコンUI */
+    #gallery-thumb {
+      position: absolute;
+      bottom: 45px;
+      left: 30px;
+      width: 50px;
+      height: 50px;
+      border-radius: 12px;
+      border: 2px solid rgba(228, 195, 139, 0.8);
+      background: rgba(0, 0, 0, 0.5);
+      background-size: cover;
+      background-position: center;
+      cursor: pointer;
+      z-index: 10;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: rgba(228, 195, 139, 0.8);
+      font-size: 18px;
+    }
+
+    /* ギャラリーモーダル */
+    #gallery-modal {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background: rgba(10, 10, 10, 0.92);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      z-index: 99;
+      flex-direction: column;
+      color: #fff;
+    }
+    #gallery-header {
+      padding: 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid rgba(228, 195, 139, 0.2);
+    }
+    #gallery-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+      padding: 15px;
+      overflow-y: auto;
+      flex: 1;
+    }
+    .gallery-item {
+      width: 100%;
+      aspect-ratio: 1;
+      object-fit: cover;
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+    .close-btn {
+      background: transparent;
+      border: none;
+      color: #e4c38b;
+      font-size: 24px;
+      cursor: pointer;
+    }
   </style>
 </head>
 <body>
@@ -139,6 +211,7 @@
     <button class="control-btn" id="zoom-2x" onclick="setZoom(2)">2x</button>
     <button class="control-btn" id="zoom-3x" onclick="setZoom(3)">3x</button>
     <div style="width: 1px; height: 16px; background: rgba(228,195,139,0.3); margin: 0 2px;"></div>
+    <!-- エフェクト ON/OFF & 強弱切り替えボタン -->
     <button class="control-btn" id="effect-btn" onclick="toggleEffectPower()">FX: Mid</button>
     <div style="width: 1px; height: 16px; background: rgba(228,195,139,0.3); margin: 0 2px;"></div>
     <button class="control-btn" onclick="switchCamera()">Cam ⟳</button>
@@ -153,9 +226,21 @@
     <canvas id="ar-canvas"></canvas>
   </div>
 
+  <!-- 撮影ライブラリサムネイルボタン -->
+  <div id="gallery-thumb" onclick="openGallery()">📷</div>
+
   <!-- シャッターボタン -->
   <div id="shutter-container">
     <button id="shutter-btn" title="Capture"></button>
+  </div>
+
+  <!-- 撮影ライブラリ（ギャラリー）モーダル -->
+  <div id="gallery-modal">
+    <div id="gallery-header">
+      <span style="letter-spacing: 0.1em; color: #e4c38b;">LIBRARY</span>
+      <button class="close-btn" onclick="closeGallery()">✕</button>
+    </div>
+    <div id="gallery-grid"></div>
   </div>
 
   <script>
@@ -164,6 +249,10 @@
     const arCanvas = document.getElementById('ar-canvas');
     const ctx = arCanvas.getContext('2d');
     const shutterBtn = document.getElementById('shutter-btn');
+    const galleryGrid = document.getElementById('gallery-grid');
+    const galleryThumb = document.getElementById('gallery-thumb');
+
+    let capturedPhotos = []; // ライブラリ用画像データ配列
 
     // --- カメラ＆ズーム・切り替えの状態管理 ---
     let currentZoom = 1;
@@ -196,7 +285,6 @@
         webcamEl.srcObject = currentStream;
         statusEl.textContent = useFrontCamera ? "FRONT CAM" : "BACK CAM";
       } catch (err) {
-        // フォールバック
         try {
           const fallbackConstraints = { video: true, audio: false };
           currentStream = await navigator.mediaDevices.getUserMedia(fallbackConstraints);
@@ -260,10 +348,34 @@
     }
     loadAndProcessFrame();
 
-    // --- フレームの位置・サイズ・タッチ操作（ドラッグ＆ピンチ）の管理 ---
+    // --- MediaPipe Face Detection による人物（顔）認識AIの初期化 ---
+    let detectedFaces = [];
+    const faceDetection = new FaceDetection({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/${file}`
+    });
+    faceDetection.setOptions({
+      model: 'short',
+      minDetectionConfidence: 0.5
+    });
+    faceDetection.onResults((results) => {
+      detectedFaces = results.detections || [];
+    });
+
+    // 定期的にカメラ画像から顔の位置を更新
+    async function processFaceDetection() {
+      if (webcamEl.readyState === webcamEl.HAVE_ENOUGH_DATA) {
+        await faceDetection.send({ image: webcamEl });
+      }
+      setTimeout(processFaceDetection, 120);
+    }
+    webcamEl.addEventListener('loadeddata', () => {
+      processFaceDetection();
+    });
+
+    // --- フレームの位置・サイズ・タッチ操作管理 ---
     let frameScale = 1.0;
-    let frameOffsetX = 0; // 画面中心からのオフセットX
-    let frameOffsetY = 0; // 画面中心からのオフセットY
+    let frameOffsetX = 0;
+    let frameOffsetY = 0;
 
     let isDragging = false;
     let dragStartX = 0;
@@ -272,15 +384,17 @@
     let initialDistance = null;
     let initialScale = 1.0;
 
-    // エフェクト強弱設定 (1: Low, 2: Mid, 3: High)
+    // エフェクト強弱 & ON/OFF 設定 (0: OFF, 1: Low, 2: Mid, 3: High)
     let effectPowerLevel = 2;
     function toggleEffectPower() {
-      effectPowerLevel = (effectPowerLevel % 3) + 1;
-      const names = { 1: 'Low', 2: 'Mid', 3: 'High' };
-      document.getElementById('effect-btn').textContent = `FX: ${names[effectPowerLevel]}`;
+      effectPowerLevel = (effectPowerLevel + 1) % 4;
+      const names = { 0: 'OFF', 1: 'Low', 2: 'Mid', 3: 'High' };
+      const btn = document.getElementById('effect-btn');
+      btn.textContent = `FX: ${names[effectPowerLevel]}`;
+      btn.classList.toggle('active', effectPowerLevel > 0);
     }
 
-    // タッチ・マウス操作イベント（フレームのドラッグ移動 ＆ 2本指ピンチ拡大縮小）
+    // タッチ・マウス操作イベント
     window.addEventListener('touchstart', (e) => {
       if (e.touches.length === 1) {
         isDragging = true;
@@ -315,7 +429,7 @@
       if (e.touches.length < 2) initialDistance = null;
     });
 
-    // --- パーティクルシステム（エフェクト強弱対応） ---
+    // --- パーティクルシステム ---
     const particles = [];
     for (let i = 0; i < 45; i++) {
       particles.push({
@@ -348,6 +462,23 @@
     }
 
     let timeCount = 0;
+
+    // 人物の顔領域に重なっているかを判定する関数
+    function isOverlappingFace(px, py, logicalWidth, logicalHeight) {
+      for (const detection of detectedFaces) {
+        const bbox = detection.boundingBox;
+        // 画面サイズ座標へ変換
+        const faceX = (1 - bbox.xCenter) * logicalWidth; // インカメ左右反転等考慮のセンター座標
+        const faceY = bbox.yCenter * logicalHeight;
+        const faceRadius = Math.max(bbox.width * logicalWidth, bbox.height * logicalHeight) * 0.8;
+
+        const dist = Math.hypot(px - faceX, py - faceY);
+        if (dist < faceRadius) {
+          return true; // 顔に重なっている
+        }
+      }
+      return false;
+    }
 
     function drawPetal(ctx, p) {
       ctx.save();
@@ -385,7 +516,7 @@
 
       ctx.clearRect(0, 0, logicalWidth, logicalHeight);
 
-      // --- A. フレームの描画（タッチ位置＆サイズ反映） ---
+      // --- A. フレームの描画 ---
       const floatOffsetY = Math.sin(timeCount * 1.5) * 6;
       const baseW = Math.min(logicalWidth * 0.75, 420) * frameScale;
       const baseH = baseW * 1.414;
@@ -404,47 +535,55 @@
         ctx.strokeRect(frameX, frameY, baseW, baseH);
       }
 
-      // --- B. パーティクルの描写（エフェクト強弱係数適用） ---
-      const activeCount = effectPowerLevel === 1 ? 0.4 : (effectPowerLevel === 2 ? 0.7 : 1.2);
+      // --- B. パーティクルの描写（ON/OFF ＆ 顔回避処理） ---
+      if (effectPowerLevel > 0) {
+        const activeCount = effectPowerLevel === 1 ? 0.4 : (effectPowerLevel === 2 ? 0.7 : 1.2);
 
-      particles.forEach((p, index) => {
-        p.y += p.speedY * activeCount;
-        if (p.type === 'petal') {
-          p.x = p.initialX + Math.sin(p.y * p.swaySpeed) * p.swayAmp;
-          p.rotation += p.rotSpeed;
+        particles.forEach((p, index) => {
+          p.y += p.speedY * activeCount;
+          if (p.type === 'petal') {
+            p.x = p.initialX + Math.sin(p.y * p.swaySpeed) * p.swayAmp;
+            p.rotation += p.rotSpeed;
 
-          if (p.y > logicalHeight + 40) {
-            p.y = -40;
-            p.initialX = Math.random() * logicalWidth;
+            if (p.y > logicalHeight + 40) {
+              p.y = -40;
+              p.initialX = Math.random() * logicalWidth;
+            }
+
+            // AI顔認識で顔の前面にかぶる場合は描画を回避
+            if (!isOverlappingFace(p.x, p.y, logicalWidth, logicalHeight)) {
+              drawPetal(ctx, p);
+            }
+          } else if (p.type === 'sparkle' && effectPowerLevel >= 2) {
+            p.x += p.speedX;
+            const pulse = 0.5 + Math.sin(timeCount * 5 + index * 1.5) * 0.5;
+            const currentAlpha = Math.max(0, p.opacity * pulse);
+
+            if (p.y > logicalHeight + 20) {
+              p.y = -20;
+              p.x = Math.random() * logicalWidth;
+            }
+
+            if (!isOverlappingFace(p.x, p.y, logicalWidth, logicalHeight)) {
+              ctx.save();
+              ctx.globalAlpha = currentAlpha;
+              ctx.fillStyle = '#ffea9f';
+              ctx.shadowColor = '#fff3bf';
+              ctx.shadowBlur = 12;
+              ctx.beginPath();
+              ctx.arc(p.x, p.y, p.size * (effectPowerLevel === 3 ? 1.3 : 1.0), 0, Math.PI * 2);
+              ctx.fill();
+              ctx.restore();
+            }
           }
-          if (effectPowerLevel > 0) drawPetal(ctx, p);
-        } else if (p.type === 'sparkle' && effectPowerLevel >= 2) {
-          p.x += p.speedX;
-          const pulse = 0.5 + Math.sin(timeCount * 5 + index * 1.5) * 0.5;
-          const currentAlpha = Math.max(0, p.opacity * pulse);
-
-          if (p.y > logicalHeight + 20) {
-            p.y = -20;
-            p.x = Math.random() * logicalWidth;
-          }
-
-          ctx.save();
-          ctx.globalAlpha = currentAlpha;
-          ctx.fillStyle = '#ffea9f';
-          ctx.shadowColor = '#fff3bf';
-          ctx.shadowBlur = 12;
-          ctx.beginPath();
-          ctx.arc(p.x, p.y, p.size * (effectPowerLevel === 3 ? 1.3 : 1.0), 0, Math.PI * 2);
-          ctx.fill();
-          ctx.restore();
-        }
-      });
+        });
+      }
 
       requestAnimationFrame(renderLoop);
     }
     renderLoop();
 
-    // --- シャッター機能（カメラズーム・フレーム位置を正確に合成して保存） ---
+    // --- シャッター機能（JPG自動保存 ＆ ライブラリ格納） ---
     shutterBtn.addEventListener('click', () => {
       const saveCanvas = document.createElement('canvas');
       const logicalWidth = window.innerWidth;
@@ -455,7 +594,7 @@
       const saveCtx = saveCanvas.getContext('2d');
       saveCtx.scale(dpr, dpr);
 
-      // 1. カメラ映像（ズーム状態を反映して正確に切り抜いて描画）
+      // 1. カメラ映像を描画
       if (webcamEl.readyState === webcamEl.HAVE_ENOUGH_DATA) {
         const vW = webcamEl.videoWidth;
         const vH = webcamEl.videoHeight;
@@ -471,7 +610,6 @@
           dy = (logicalHeight - dh) / 2;
         }
 
-        // ズーム（scale）を反映した領域計算
         saveCtx.save();
         saveCtx.translate(logicalWidth / 2, logicalHeight / 2);
         saveCtx.scale(currentZoom, currentZoom);
@@ -480,15 +618,43 @@
         saveCtx.restore();
       }
 
-      // 2. 現在のAR演出（移動・サイズ変更されたフレーム ＆ エフェクト）を合成
+      // 2. AR演出キャンバスをそのまま合成
       saveCtx.drawImage(arCanvas, 0, 0, logicalWidth, logicalHeight);
 
-      // 3. 超高画質保存
+      // 3. JPGデータ生成（品質: 0.95）
+      const imgDataUrl = saveCanvas.toDataURL('image/jpeg', 0.95);
+
+      // 端末へ自動保存（ダウンロード）
       const link = document.createElement('a');
-      link.download = 'luxury_pro_hanami_' + Date.now() + '.png';
-      link.href = saveCanvas.toDataURL('image/png', 1.0);
+      link.download = 'luxury_pro_hanami_' + Date.now() + '.jpg';
+      link.href = imgDataUrl;
       link.click();
+
+      // ライブラリ配列に追加してサムネイルを更新
+      capturedPhotos.unshift(imgDataUrl);
+      galleryThumb.style.backgroundImage = `url(${imgDataUrl})`;
+      galleryThumb.textContent = '';
     });
+
+    // ギャラリーモーダル制御
+    function openGallery() {
+      if (capturedPhotos.length === 0) {
+        alert("撮影した写真がまだありません。");
+        return;
+      }
+      galleryGrid.innerHTML = '';
+      capturedPhotos.forEach(url => {
+        const img = document.createElement('img');
+        img.src = url;
+        img.className = 'gallery-item';
+        galleryGrid.appendChild(img);
+      });
+      document.getElementById('gallery-modal').style.display = 'flex';
+    }
+
+    function closeGallery() {
+      document.getElementById('gallery-modal').style.display = 'none';
+    }
   </script>
 </body>
 </html>
